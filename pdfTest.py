@@ -40,14 +40,14 @@ def analyze_invoice(invoice_text, client):
             *   **Адрес заказчика**: (город, улица, дом/офис; **без индекса и области**, формат: г.{Город}, ул.{Улица}, {Дом/офис}).
             *   **УНП заказчика**: УНП.
         *   **Период оказания услуг:** (формат: с ДД.ММ.ГГГГ по ДД.ММ.ГГГГ). Числовой формат.
-        *   **Детализация услуг:** (Этот блок должен быть *списком* (list) услуг)
-            *   **Наименование услуги(существительное)**: (без "услуги" и "по").
+        *   **Детализация услуг:** (Этот блок должен быть *списком* (list) услуг. Должна быть указанна только итоговая информация о всех произведенных услугах.)
+            *   **Наименование услуги(существительное, если явно не указано, напиши сам соответсвующее название)**: (без "услуги" и "по").
             *   **Сумма без НДС**: (число с разделителем запятой).
-            *   **Ставка НДС**: ("-" или "0"/"0,00"  -> "Без НДС").
-            *   **Сумма НДС**: (число; при "Без НДС" -> "-").
-            *   **Сумма с НДС**: (число).
-        *   **Общая стоимость услуг прописью:** (...).
-        *   **НДС статус**: ("Без НДС" или "С НДС").
+            *   **Ставка НДС**: (Если "-" или "0"/"0,00"  -> "Без НДС", иначе только процент НДС.).
+            *   **Сумма НДС**: (Числом, если в документе "Без НДС", то "-").
+            *   **Сумма с НДС**: (числом).
+        *   **Общая стоимость услуг прописью:** (...) Если не оказанно в документе, перепеши сам с числового вида и буквенный. ВАЖНО: это значение с учетом НДС.
+        *   **НДС статус**: ("Без НДС", иначе если НДС есть, то "НДС "процент" - "сумма цифрами" ("сумма буквами")").
         *   **Кто являеться представителем ЗАКАЗЧИКА**:
             *   **Компания заказчика**: (...).
             *   **Должность представителя**: (...).
@@ -143,20 +143,12 @@ def extract_data_from_analysis(analysis_result):
     return data
 
 def write_data_to_excel(data, excel_file="output.xlsx"):
-    try:
-        wb = openpyxl.load_workbook(excel_file)
-        ws = wb.active
-        #if file exists, delete and create new (for overwriting)
-        wb.close()
+    if os.path.exists(excel_file):
         os.remove(excel_file)
-        wb = openpyxl.Workbook()
-        ws = wb.active
-        ws.title = "Sheet1"
 
-    except FileNotFoundError:
-        wb = openpyxl.Workbook()
-        ws = wb.active
-        ws.title = "Sheet1"
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "Sheet1"
 
     #write data
     ws.cell(row=2, column=2).value = "Бухгалтерская справка № Б.Н."
@@ -222,7 +214,7 @@ def write_data_to_excel(data, excel_file="output.xlsx"):
 
     ws.cell(row=row_num, column=1).value = "Итого"
     ws.cell(row=row_num, column=2).value = str(total_without_vat).replace(".", ",")
-    ws.cell(row=row_num, column=3).value = data.get("НДС_Статус", "Без НДС") if total_without_vat > 0 else ""
+    ws.cell(row=row_num, column=3).value = service.get("vat_rate", "") if total_without_vat > 0 else "-"
     ws.cell(row=row_num, column=4).value = str(total_vat_amount).replace(".", ",") if total_vat_amount > 0 else "-"
     ws.cell(row=row_num, column=5).value = str(total_with_vat).replace(".", ",")
 
