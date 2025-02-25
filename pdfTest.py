@@ -6,6 +6,7 @@ import re
 import argparse
 import os
 import json
+import fitz
 
 #init parser and model
 md = MarkItDown()
@@ -265,7 +266,42 @@ def main():
         print(f"Error: Input file '{args.input}' not found.")
         return
 
-    result = md.convert(args.input)
+    # Открываем PDF
+    doc = fitz.open(args.input)
+    total_pages = len(doc)
+
+    print(f"Оригинальный PDF содержит {total_pages} страниц.")
+
+    while True:
+        try:
+            num_pages = int(input(f"Сколько страниц оставить? (0 - оставить все, 1-{total_pages}): "))
+            if 0 <= num_pages <= total_pages:
+                break
+            else:
+                print("Ошибка: число вне диапазона.")
+        except ValueError:
+            print("Ошибка: введите целое число.")
+
+    if num_pages == 0:
+        print("Используется оригинальный PDF без изменений.")
+        pdf_to_process = args.input
+    else:
+        # Создаём временный PDF
+        temp_pdf = "temp.pdf"
+        new_doc = fitz.open()
+
+        for page_num in range(num_pages):
+            new_doc.insert_pdf(doc, from_page=page_num, to_page=page_num)
+
+        new_doc.save(temp_pdf)
+        new_doc.close()
+        pdf_to_process = temp_pdf
+        print(f"Создан временный PDF: {temp_pdf}")
+
+    doc.close()
+
+    # Обрабатываем PDF (оригинальный или временный)
+    result = md.convert(pdf_to_process)
 
     analysis_result = analyze_invoice(result.text_content, client)
     print("\nРезультат анализа:")
@@ -273,10 +309,15 @@ def main():
 
     extracted_data = extract_data_from_analysis(analysis_result)
 
-    base_name = os.path.splitext(args.input)[0]  # Get filename without extension
+    base_name = os.path.splitext(args.input)[0]
     output_file = f"{base_name}.xlsx"
 
     write_data_to_excel(extracted_data, output_file)
+
+    if num_pages != 0:
+        os.remove(temp_pdf)
+        print(f"Временный PDF {temp_pdf} удалён.")
+
 
 if __name__ == "__main__":
     main()
