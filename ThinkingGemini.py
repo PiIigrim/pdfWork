@@ -7,10 +7,11 @@ import os
 import json
 import fitz
 import io
-from PIL import Image  # Import the PIL library
+from PIL import Image
+import time  # Import the time module
 
 # init model
-model = 'gemini-2.0-flash-thinking-exp-01-21'  # Or the appropriate model for image input
+model = 'gemini-2.0-flash-thinking-exp-01-21'
 
 # init border style
 thin_border = Border(left=Side(style='thin'), right=Side(style='thin'),
@@ -27,10 +28,9 @@ def analyze_invoice(invoice_image_data, client):
 
     1.  **Извлечение информации:** Проанализируй текст и выдели:
         *   **Общая информация о документе:**
-            *   "Бухгалтерская справка №" и номер (если есть; иначе "Б.Н.").
-            *   Дата "от" (если есть; формат: ДД.ММ.ГГГГ).
-            *   Номер счета(документа). формат: "счет № ..."
-            *   "по договору №" + номер и дата (если есть; формат: "по договору № ... от ДД.ММ.ГГГГ").
+            *   **Дата счета:**  Извлеки дату, которая **указана в связке с номером счета**, обычно сразу после слов "счет №" или "детализация счета №" и слова "от" и являеться последним днём месяца.  **Это основная дата счета.** (формат: ДД.ММ.ГГГГ). Если есть "Дата выдачи", игнорируй ее, если основная дата счета найдена. "Дата выдачи" может быть датой создания отчета, а не датой самого счета.
+            *   **Номер счета(документа).** формат: "счет № ..."
+            *   **"по договору №" + номер и дата** (если есть; формат: "по договору № ... от ДД.ММ.ГГГГ").
         *   **Исполнитель:**
             *   **Компания-исполнитель**: Полное наименование.
             *   **Адрес исполнителя**:  Адрес (город, улица, дом/офис; **без индекса и области**, формат: г.{Город}, ул.{Улица}, {Дом/офис}. Названия городов и улиц с большой буквы, НЕ капсом).
@@ -42,12 +42,12 @@ def analyze_invoice(invoice_image_data, client):
             *   **Адрес заказчика**: (город, улица, дом/офис; **без индекса и области**, формат: г.{Город}, ул.{Улица}, {Дом/офис}).
             *   **УНП заказчика**: УНП.
         *   **Период оказания услуг:** (формат: с ДД.ММ.ГГГГ по ДД.ММ.ГГГГ). Числовой формат.
-        *   **Детализация услуг:** (Этот блок должен быть *списком* услуг. Должна быть указанна только итоговая(общая) информация о всех произведенных услугах.)
-            *   **Наименование услуги(существительное, если явно не указано, напиши сам соответсвующее название, если требуеться обьедени несколько услуг под одним названием)**: (без "услуги" и "по").
-            *   **Сумма без НДС**: (число с разделителем запятой).
-            *   **Ставка НДС**: (Если "-" или "0"/"0,00"  -> "Без НДС", иначе только процент НДС.).
-            *   **Сумма НДС**: (Числом, если в документе "Без НДС", то "-").
-            *   **Сумма с НДС**: (числом).
+        *   **Детализация услуг:** (Этот блок должен быть *списком* из **одного** элемента, представляющего **итоговую информацию о услугах**.  Найди раздел "ИТОГО" в таблице.  **Найди итоговую строку, которая обобщает все или большую часть оказанных услуг.**  Если есть строка "Услуги связи" в "ИТОГО", используй ее. В противном случае, выбери строку в "ИТОГО", которая выглядит как общая сумма для всех услуг, или наиболее подходящую, если их несколько. Извлеки из этой строки значения для  "Сумма без НДС," "Ставка НДС," "Сумма НДС," и "Сумма с НДС". В качестве **Наименования услуги** используй текст из столбца "Наименование услуги" для выбранной итоговой строки. Если наименование услуги в итоговой строке слишком длинное или детализированное, сократи его до более общего и подходящего наименования или используй общее название, например, "Услуги".)
+            *   **Наименование услуги**: (Обобщенное название итоговой услуги или "Услуги").
+            *   **Сумма без НДС**: (число с разделителем запятой, из итоговой строки).
+            *   **Ставка НДС**: (Если "-" или "0"/"0,00"  -> "Без НДС", иначе только процент НДС, из итоговой строки).
+            *   **Сумма НДС**: (Числом, если в документе "Без НДС", то "-", из итоговой строки).
+            *   **Сумма с НДС**: (числом, из итоговой строки).
         *   **Общая стоимость услуг прописью:** (...) Если не оказанно в документе, перепеши сам с числового вида и буквенный. ВАЖНО: это значение с учетом НДС.
         *   **НДС статус**: ("Без НДС", иначе если НДС есть, то "НДС "процент" - "сумма цифрами" ("сумма буквами")").
         *   **Кто являеться представителем ЗАКАЗЧИКА**:
@@ -60,9 +60,8 @@ def analyze_invoice(invoice_image_data, client):
         ```json
         {
           "document_info": {
-            "document_name": "Бухгалтерская справка № Б.Н.",
             "document_date": "31.12.2024",
-            "document_number": "счет № 284"
+            "document_number": "счет № 284",
             "contract_info": "по договору № ПО-103 от 01.09.2019"
           },
           "executor": {
@@ -80,15 +79,15 @@ def analyze_invoice(invoice_image_data, client):
           "service_period": "с 01.12.2024 по 31.12.2024",
           "service_details": [
             {
-              "service_name": "Сопровождение программного обеспечения",
-              "amount_without_vat": "290,00",
-              "vat_rate": "Без НДС",
-              "vat_amount": "-",
-              "amount_with_vat": "290,00"
+              "service_name": "Услуги связи",
+              "amount_without_vat": "90,5",
+              "vat_rate": "25%",
+              "vat_amount": "22,63",
+              "amount_with_vat": "113,13"
             }
           ],
-          "total_amount_words": "Двести девяносто белорусских рублей 00 копеек",
-          "vat_status": "Без НДС",
+          "total_amount_words": "Сто тринадцать белорусских рублей 13 копеек",
+          "vat_status": "НДС 25% - 22,63 (Двадцать два белорусских рубля 63 копейки)",
           "director": {
             "company_name": "ООО 'ДЕВКРАФТ'",
             "position": "Директор",
@@ -96,14 +95,13 @@ def analyze_invoice(invoice_image_data, client):
           }
         }
         ```
-    Текст счета:
-    """
+    Текст счета:"""
 
     # Construct the content with the prompt as text and images
     content = [prompt]
     for image_data in invoice_image_data:
-        image = Image.open(io.BytesIO(image_data))  # Load image with PIL
-        content.append(image)  # Append PIL Image object directly
+        image = Image.open(io.BytesIO(image_data))
+        content.append(image)
     try:
         response = client.models.generate_content(
             model=model,
@@ -298,12 +296,12 @@ def write_data_to_excel(data, excel_file="output.xlsx"):
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Analyze an invoice and extract data to an Excel file.")
+        description="Analyze invoice(s) and extract data to Excel file(s). Input can be a single PDF file or a directory containing PDF files.")
 
     parser.add_argument("-i",
                         "--input",
                         required=True,
-                        help="Path to the input PDF file.")
+                        help="Path to the input PDF file or directory containing PDF files.")
     parser.add_argument("-k", "--key", required=True,
                         help="Your Google Gemini API key.")
 
@@ -311,59 +309,87 @@ def main():
 
     client = genai.Client(api_key=args.key)
 
-    if not os.path.exists(args.input):
-        print(f"Error: Input file '{args.input}' not found.")
+    input_path = args.input
+
+    if os.path.isfile(input_path):
+        pdf_files = [input_path]
+    elif os.path.isdir(input_path):
+        pdf_files = [
+            os.path.join(input_path, f)
+            for f in os.listdir(input_path)
+            if f.lower().endswith('.pdf')
+        ]
+        if not pdf_files:
+            print(f"Error: No PDF files found in directory '{input_path}'.")
+            return
+    else:
+        print(f"Error: Input path '{input_path}' is not a valid file or directory.")
         return
 
-    # Открываем PDF
-    doc = fitz.open(args.input)
-    total_pages = len(doc)
+    for pdf_file in pdf_files:
+        if not os.path.exists(pdf_file):
+            print(f"Error: Input file '{pdf_file}' not found.")
+            continue  # Skip to the next file if current one not found
 
-    print(f"Оригинальный PDF содержит {total_pages} страниц.")
+        print(f"\nProcessing file: {pdf_file}")
 
-    while True:
-        try:
-            num_pages = int(input(
-                f"Сколько страниц оставить? (0 - оставить все, 1-{total_pages}): "))
-            if 0 <= num_pages <= total_pages:
-                break
-            else:
-                print("Ошибка: число вне диапазона.")
-        except ValueError:
-            print("Ошибка: введите целое число.")
+        # Открываем PDF
+        doc = fitz.open(pdf_file)
+        total_pages = len(doc)
 
-    image_data = []
-    if num_pages == 0:
-        print("Используется оригинальный PDF без изменений.")
-        for page in doc:
-            pix = page.get_pixmap()
-            img = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
-            img_byte_arr = io.BytesIO()
-            img.save(img_byte_arr, format='PNG')
-            img_byte_arr = img_byte_arr.getvalue()
-            image_data.append(img_byte_arr)
-    else:
-        for page_num in range(num_pages):
-            page = doc.load_page(page_num)
-            pix = page.get_pixmap()
-            img = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
-            img_byte_arr = io.BytesIO()
-            img.save(img_byte_arr, format='PNG')
-            img_byte_arr = img_byte_arr.getvalue()
-            image_data.append(img_byte_arr)
+        print(f"Оригинальный PDF содержит {total_pages} страниц.")
 
-    doc.close()
+        while True:
+            try:
+                num_pages = int(input(
+                    f"Сколько страниц оставить для '{os.path.basename(pdf_file)}'? (0 - оставить все, 1-{total_pages}): "))
+                if 0 <= num_pages <= total_pages:
+                    break
+                else:
+                    print("Ошибка: число вне диапазона.")
+            except ValueError:
+                print("Ошибка: введите целое число.")
 
-    analysis_result = analyze_invoice(image_data, client)
-    print("\nРезультат анализа:")
-    print(analysis_result)
+        image_data = []
+        if num_pages == 0:
+            print("Используется оригинальный PDF без изменений.")
+            for page in doc:
+                pix = page.get_pixmap()
+                img = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
+                img_byte_arr = io.BytesIO()
+                img.save(img_byte_arr, format='PNG')
+                img_byte_arr = img_byte_arr.getvalue()
+                image_data.append(img_byte_arr)
+        else:
+            for page_num in range(num_pages):
+                page = doc.load_page(page_num)
+                pix = page.get_pixmap()
+                img = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
+                img_byte_arr = io.BytesIO()
+                img.save(img_byte_arr, format='PNG')
+                img_byte_arr = img_byte_arr.getvalue()
+                image_data.append(img_byte_arr)
 
-    extracted_data = extract_data_from_analysis(analysis_result)
+        doc.close()
 
-    base_name = os.path.splitext(args.input)[0]
-    output_file = f"{base_name}.xlsx"
+        analysis_result = analyze_invoice(image_data, client)
+        #print("\nРезультат анализа:")
+        #print(analysis_result)
 
-    write_data_to_excel(extracted_data, output_file)
+        extracted_data = extract_data_from_analysis(analysis_result)
+
+        base_name = os.path.splitext(os.path.basename(pdf_file))[0] # Use pdf_file basename
+        output_file = f"{base_name}.xlsx"
+        if os.path.isdir(input_path): # if input was directory, output to same directory
+            output_file = os.path.join(input_path, output_file)
+
+        write_data_to_excel(extracted_data, output_file)
+
+        if pdf_files.index(pdf_file) < len(pdf_files) - 1: # Delay if not the last file
+            print("\nWaiting 10 seconds before processing the next file...")
+            time.sleep(10)
+
+    print("\nFinished processing all files.")
 
 
 if __name__ == "__main__":
