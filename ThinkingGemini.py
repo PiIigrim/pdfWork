@@ -341,6 +341,9 @@ def main():
 
         while True:
             try:
+                if total_pages == 1:
+                    num_pages = 0
+                    break
                 num_pages = int(input(
                     f"Сколько страниц оставить для '{os.path.basename(pdf_file)}'? (0 - оставить все, 1-{total_pages}): "))
                 if 0 <= num_pages <= total_pages:
